@@ -1,23 +1,13 @@
-import logging
+from base64 import b64encode
 from pathlib import Path
-from io import StringIO, BytesIO, TextIOWrapper
 
 from flask import (
     render_template,
     request,
-    redirect,
-    send_file,
-    send_from_directory,
-    url_for,
 )
-from werkzeug.utils import secure_filename
 
-from app import create_app
-
-# import apg  ## Use when debuggging and copy apg.py to root repo dir
-import audio_program_generator.apg as apg
-
-app = create_app()
+from app import app
+from app.tasks import create_audio_mix
 
 
 @app.route("/", methods=("GET", "POST"))
@@ -43,22 +33,22 @@ def setvals():
     slow = True if request.form.get("slow") == "on" else False
     accent = request.form.get("accent")
     kwargs = dict(slow=slow, attenuation=attenuation, tld=accent)
-    phr = StringIO(req_phrase_file_obj.read().decode())
-    snd = None if req_sound_file_obj.filename == '' else BytesIO(req_sound_file_obj.read())
-    A = apg.AudioProgramGenerator(
-        phr,
-        snd,
-        **kwargs,
-    )
 
-    # Generate mixed sound file from speech, then serve in browser
-    result = A.invoke()
-    return send_file(
-        result,
-        mimetype="audio/mpeg",
-        download_name=str(Path(req_phrase_file_obj.filename)),
-        as_attachment=True,
-    )
+    req_phrase_file_content_encoded = b64encode(
+        req_phrase_file_obj.read())
+    req_sound_file_content_encoded = b64encode(
+        req_sound_file_obj.read())
+
+    create_audio_mix.delay(
+        req_phrase_file_obj.filename,
+        req_phrase_file_content_encoded,
+        req_sound_file_obj.filename,
+        req_sound_file_content_encoded,
+        **kwargs)
+
+    return render_template("public/setvals.html",
+                           msg="Your file is processing")
+
 
 def shutdown_server():
     func = request.environ.get("werkzeug.server.shutdown")
